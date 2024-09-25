@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms, models
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
+import mlflow
+import mlflow.pytorch
 
 def set_seed(seed=31415):
     """Set random seed for reproducibility."""
@@ -34,7 +36,7 @@ def create_data_generators(datapath, img_size, batch_size=25, val_split=0.2):
     transform = transforms.Compose([
         v2.RandomResizedCrop(size=(224, 224), antialias=True),
         v2.RandomHorizontalFlip(p=0.5),
-        v2.ToTensor(),
+        v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)]),
         v2.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
@@ -55,7 +57,7 @@ def create_data_generators(datapath, img_size, batch_size=25, val_split=0.2):
 
 def create_model(img_size):
     """Create and compile the model."""
-    model = models.efficientnet_b0(pretrained=True)
+    model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
     num_ftrs = model.classifier[1].in_features
     model.classifier = nn.Sequential(
         nn.Linear(num_ftrs, 1024),
@@ -79,7 +81,7 @@ def get_callbacks(savepath):
     existing_files = [f for f in os.listdir(savepath) if f.startswith('EffNetB0_classifier') and f.endswith('.pth')]
     file_number = len(existing_files) + 1
 
-    checkpoint_path = os.path.join(savepath, 'EffNetB0_classifier_{file_number}.pth')
+    checkpoint_path = os.path.join(savepath, f'EffNetB0_classifier_{file_number}.pth')
     
     return early_stopping, checkpoint_path
 
@@ -103,73 +105,97 @@ def plot_history(history_df, save=True):
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, callbacks, device):
     """Train the model."""
-    history = {'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []}
-    
-    for epoch in range(epochs):
-        model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
-        
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+    # Set the tracking URI to the current directory
+    # mlflow.set_tracking_uri(uri="http://127.0.0.1:7000")    
+    # print("MLflow tracking URI set to:", mlflow.get_tracking_uri())
+    # Start MLflow run
+
+    with mlflow.start_run() as run:
+        # Log model parameters (e.g., hyperparameters)
+        mlflow.log_param("learning_rate", optimizer.defaults['lr'])
+        mlflow.log_param("batch_size", train_loader.batch_size)
+        mlflow.log_param("epochs", epochs)
+
+        # Set some tags for metadata
+        mlflow.set_tag("model_type", "EfficientNetB0")
+        mlflow.set_tag("note", "First run using MLflow")
+
+        history = {'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []}
+
+        for epoch in range(epochs):
+            model.train()
+            running_loss = 0.0
+            correct = 0
+            total = 0
             
-            running_loss += loss.item() * inputs.size(0)
-            _, predicted = torch.max(outputs, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-        
-        epoch_loss = running_loss / len(train_loader.dataset)
-        epoch_acc = correct / total
-        
-        model.eval()
-        val_loss = 0.0
-        val_correct = 0
-        val_total = 0
-        
-        with torch.no_grad():
-            for inputs, labels in val_loader:
+            for inputs, labels in train_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
+                optimizer.zero_grad()
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
                 
-                val_loss += loss.item() * inputs.size(0)
+                running_loss += loss.item() * inputs.size(0)
                 _, predicted = torch.max(outputs, 1)
-                val_total += labels.size(0)
-                val_correct += (predicted == labels).sum().item()
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+            
+            epoch_loss = running_loss / len(train_loader.dataset)
+            epoch_acc = correct / total
+            
+            model.eval()
+            val_loss = 0.0
+            val_correct = 0
+            val_total = 0
+            
+            with torch.no_grad():
+                for inputs, labels in val_loader:
+                    inputs, labels = inputs.to(device), labels.to(device)
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+                    
+                    val_loss += loss.item() * inputs.size(0)
+                    _, predicted = torch.max(outputs, 1)
+                    val_total += labels.size(0)
+                    val_correct += (predicted == labels).sum().item()
+            
+            val_loss = val_loss / len(val_loader.dataset)
+            val_acc = val_correct / val_total
+            
+            mlflow.log_metric("train_loss", epoch_loss, step=epoch)
+            mlflow.log_metric("train_accuracy", epoch_acc, step=epoch)
+            mlflow.log_metric("val_loss", val_loss, step=epoch)
+            mlflow.log_metric("val_accuracy", val_acc, step=epoch)
+
+            history['loss'].append(epoch_loss)
+            history['val_loss'].append(val_loss)
+            history['accuracy'].append(epoch_acc)
+            history['val_accuracy'].append(val_acc)
+            
+            print(f'Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
+            
+            # Early stopping
+            if callbacks['best_loss'] is None or val_loss < callbacks['best_loss'] - callbacks['min_delta']:
+                callbacks['best_loss'] = val_loss
+                callbacks['counter'] = 0
+                torch.save(model.state_dict(), callbacks['checkpoint_path'])
+                print('val_loss improved, saving model')
+            else:
+                callbacks['counter'] += 1
+                if callbacks['counter'] >= callbacks['patience']:
+                    callbacks['early_stop'] = True
+                    print("Early stopping")
+                    break
+
+        # Log the model to MLflow at the end of training
+        mlflow.pytorch.log_model(model, "model")
         
-        val_loss = val_loss / len(val_loader.dataset)
-        val_acc = val_correct / val_total
-        
-        history['loss'].append(epoch_loss)
-        history['val_loss'].append(val_loss)
-        history['accuracy'].append(epoch_acc)
-        history['val_accuracy'].append(val_acc)
-        
-        print(f'Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
-        
-        # Early stopping
-        if callbacks['best_loss'] is None or val_loss < callbacks['best_loss'] - callbacks['min_delta']:
-            callbacks['best_loss'] = val_loss
-            callbacks['counter'] = 0
-            torch.save(model.state_dict(), callbacks['checkpoint_path'])
-        else:
-            callbacks['counter'] += 1
-            if callbacks['counter'] >= callbacks['patience']:
-                callbacks['early_stop'] = True
-                print("Early stopping")
-                break
-    
-    return history
+        return history
 
 if __name__ == "__main__":
     print("\n", "\n", "Classifier training script", "\n")
-    
+    mlflow.end_run()  # End any existing runs
     # Setup
     set_seed()
     setup_matplotlib()
