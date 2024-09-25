@@ -1,0 +1,15 @@
+Windows
+
+Initialize virtual environment : py -m venv path\to\venv
+Activate venv : .venv\Scripts\Activate.ps1
+
+Linux 
+
+create text file : touch filename.txt
+
+activate venv : source venv/Scripts/activate
+
+ouvrir vscode : . code
+
+run script with log : overwriting : python script.py | tee log.txt 
+		      appending : python script.py | tee -a log.txt 	
