@@ -34,7 +34,7 @@ def create_data_generators(datapath, img_size, batch_size=25, val_split=0.2):
     transform = transforms.Compose([
         v2.RandomResizedCrop(size=(224, 224), antialias=True),
         v2.RandomHorizontalFlip(p=0.5),
-        v2.ToTensor(),
+        v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)]),
         v2.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
@@ -55,7 +55,7 @@ def create_data_generators(datapath, img_size, batch_size=25, val_split=0.2):
 
 def create_model(img_size):
     """Create and compile the model."""
-    model = models.efficientnet_b0(pretrained=True)
+    model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
     num_ftrs = model.classifier[1].in_features
     model.classifier = nn.Sequential(
         nn.Linear(num_ftrs, 1024),
@@ -79,7 +79,7 @@ def get_callbacks(savepath):
     existing_files = [f for f in os.listdir(savepath) if f.startswith('EffNetB0_classifier') and f.endswith('.pth')]
     file_number = len(existing_files) + 1
 
-    checkpoint_path = os.path.join(savepath, 'EffNetB0_classifier_{file_number}.pth')
+    checkpoint_path = os.path.join(savepath, f'EffNetB0_classifier_{file_number}.pth')
     
     return early_stopping, checkpoint_path
 
@@ -158,6 +158,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
             callbacks['best_loss'] = val_loss
             callbacks['counter'] = 0
             torch.save(model.state_dict(), callbacks['checkpoint_path'])
+            print('val_loss improved, saving model.')
         else:
             callbacks['counter'] += 1
             if callbacks['counter'] >= callbacks['patience']:
