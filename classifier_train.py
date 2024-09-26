@@ -10,6 +10,11 @@ from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms, models
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
+import mlflow
+import mlflow.pytorch
+from mlflow.models import infer_signature
+import time
+from datetime import datetime
 
 def set_seed(seed=31415):
     """Set random seed for reproducibility."""
@@ -101,11 +106,35 @@ def plot_history(history_df, save=True):
     print("\n", "Minimum Validation Loss: {:0.4f}".format(history_df['val_loss'].min()), "\n")
     print("Corresponding Validation Accuracy: {:0.4f}".format(history_df['val_accuracy'][history_df['val_loss'].idxmin()]), "\n")
 
+def example_data_loader(img_size=(224, 224)):
+    # Assuming typical input is a batch of images from the data loader
+    train_loader, _ = create_data_generators(DATAPATH, img_size)
+    example_input, _ = next(iter(train_loader))
+    example_input = example_input.to(device)
+    example_output = model(example_input)
+
+    return example_input, example_output
+
 def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, callbacks, device):
     """Train the model."""
-    history = {'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []}
+    best_model = model
+    # Log model parameters (e.g., hyperparameters)
+    mlflow.log_param("learning_rate", optimizer.defaults['lr'])
+    mlflow.log_param("batch_size", train_loader.batch_size)
+    mlflow.log_param("epochs", epochs)
+
+    # Set some tags for metadata
     
+    mlflow.set_tag("model_type", "EfficientNetB0")
+    #mlflow.set_tag("note", "First run using MLflow")
+
+    total_training_time = 0  # Track total training time for all epochs
+    total_steps = 0  # Track total steps across all epochs
+
+    history = {'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []}
+
     for epoch in range(epochs):
+        start_time = time.time()  # Start timing the epoch
         model.train()
         running_loss = 0.0
         correct = 0
@@ -123,6 +152,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
             _, predicted = torch.max(outputs, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
+
+        end_time = time.time()  # End timing the epoch
         
         epoch_loss = running_loss / len(train_loader.dataset)
         epoch_acc = correct / total
@@ -145,32 +176,66 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         
         val_loss = val_loss / len(val_loader.dataset)
         val_acc = val_correct / val_total
+
         
+        epoch_training_time = end_time - start_time
+        total_training_time += epoch_training_time
+        steps_in_epoch = len(train_loader)  # Total steps for this epoch (batches)
+        total_steps += steps_in_epoch
+        
+        # Log the average training time per step for this epoch
+        avg_time_per_step = epoch_training_time / steps_in_epoch
+
+        # Log metrics to MLflow
+        mlflow.log_metric("avg_time_per_step", avg_time_per_step, step=epoch)
+        mlflow.log_metric("train_loss", epoch_loss, step=epoch)
+        mlflow.log_metric("train_accuracy", epoch_acc, step=epoch)
+        mlflow.log_metric("val_loss", val_loss, step=epoch)
+        mlflow.log_metric("val_accuracy", val_acc, step=epoch)
+
         history['loss'].append(epoch_loss)
         history['val_loss'].append(val_loss)
         history['accuracy'].append(epoch_acc)
         history['val_accuracy'].append(val_acc)
         
+        example_input, example_output = example_data_loader()
+        signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
+
         print(f'Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
         
         # Early stopping
         if callbacks['best_loss'] is None or val_loss < callbacks['best_loss'] - callbacks['min_delta']:
             callbacks['best_loss'] = val_loss
             callbacks['counter'] = 0
-            torch.save(model.state_dict(), callbacks['checkpoint_path'])
-            print('val_loss improved, saving model.')
+            best_model = model
+            print('val_loss improved, saving model')
+            
         else:
             callbacks['counter'] += 1
             if callbacks['counter'] >= callbacks['patience']:
                 callbacks['early_stop'] = True
                 print("Early stopping")
                 break
-    
+
+    # Log the model to MLflow at the end of training
+    torch.save(best_model.state_dict(), callbacks['checkpoint_path'])
+
+    mlflow.pytorch.log_model(best_model, 
+                        artifact_path = "model",
+                        signature = signature,
+                        registered_model_name = "Classification-row-images"
+                        )
+
+
+    # Log the total average training time per step for all epochs
+    overall_avg_time_per_step = total_training_time / total_steps
+    mlflow.log_metric("overall_avg_time_per_step", overall_avg_time_per_step)
+        
     return history
 
 if __name__ == "__main__":
-    print("\n", "\n", "Classifier training script", "\n")
-    
+    print("\n", "\n","Classifier training script", "\n")
+
     # Setup
     set_seed()
     setup_matplotlib()
@@ -202,45 +267,53 @@ if __name__ == "__main__":
         
     print("Training...", "\n")
 
-    # Train the model
-    history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
+    mlflow.set_experiment('Classification-row-images')
 
-    history_df = pd.DataFrame(history).fillna(np.nan)
+    with mlflow.start_run(run_name=f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}") as run:
+        with mlflow.start_run(run_name=f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-0.001", nested = True) as run:
 
-    plot_history(history_df, save=False)
+            # Train the model
+            history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
 
-    # Recompile the model with a lower learning rate
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
-    
-    # Define early stopping callback for fine-tuning
-    early_stopping['patience'] = 5
-    early_stopping['min_delta'] = 0.0001
-    early_stopping['counter'] = 0
-    early_stopping['early_stop'] = False
-    
-    print("Continuing with lower learning rate ...", "\n")
+        history_df = pd.DataFrame(history).fillna(np.nan)
 
-    # Continue training the model
-    history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-    
-    print('Training completed. Model saved to:', SAVEPATH, '\n')
+        plot_history(history_df, save=False)
 
-    history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
+        # Recompile the model with a lower learning rate
+        optimizer = optim.Adam(model.parameters(), lr=0.0001)
+        
+        # Define early stopping callback for fine-tuning
+        early_stopping['patience'] = 5
+        early_stopping['min_delta'] = 0.0001
+        early_stopping['counter'] = 0
+        early_stopping['early_stop'] = False
+        
+        print("Continuing with lower learning rate ...", "\n")
 
-    plot_history(history_df, save=True)
+        with mlflow.start_run(run_name=f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-0.001", nested = True) as run:
 
-    print("\n", "NOW FINE TUNING THE MODEL", "\n")
+            # Continue training the model
+            history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
+            
+        print('Training completed. Model saved to:', SAVEPATH, '\n')
 
-    # Unfreeze some layers and fine-tune the model
-    for param in model.parameters():
-        param.requires_grad = True
-    
-    # Recompile the model with a lower learning rate
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
-    
-    # Continue training the model
-    history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-    
+        history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
+
+        plot_history(history_df, save=True)
+
+        print("\n", "NOW FINE TUNING THE MODEL", "\n")
+
+        # Unfreeze some layers and fine-tune the model
+        for param in model.parameters():
+            param.requires_grad = True
+        
+        # Recompile the model with a lower learning rate
+        optimizer = optim.Adam(model.parameters(), lr=0.0001)
+
+        with mlflow.start_run(run_name=f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-finetuning", nested = True) as run:
+            # Continue training the model
+            history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
+            
     print('Training completed. Model saved to:', SAVEPATH, '\n')
     
     history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)

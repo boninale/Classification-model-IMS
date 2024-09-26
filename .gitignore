@@ -2,9 +2,10 @@ __pycache__
 datasets
 tensorflow
 venv
+graphs
 changename.py
 code.txt
 stratified_sampling.py
-graphs
+
 
 
