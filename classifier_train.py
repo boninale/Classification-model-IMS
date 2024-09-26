@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib import rcParams
 import mlflow
 import mlflow.pytorch
+from mlflow.models import infer_signature
 import time
 from datetime import datetime
 
@@ -105,9 +106,18 @@ def plot_history(history_df, save=True):
     print("\n", "Minimum Validation Loss: {:0.4f}".format(history_df['val_loss'].min()), "\n")
     print("Corresponding Validation Accuracy: {:0.4f}".format(history_df['val_accuracy'][history_df['val_loss'].idxmin()]), "\n")
 
+def example_data_loader(img_size=(224, 224)):
+    # Assuming typical input is a batch of images from the data loader
+    train_loader, _ = create_data_generators(DATAPATH, img_size)
+    example_input, _ = next(iter(train_loader))
+    example_input = example_input.to(device)
+    example_output = model(example_input)
+
+    return example_input, example_output
+
 def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, callbacks, device):
     """Train the model."""
-
+    best_model = model
     # Log model parameters (e.g., hyperparameters)
     mlflow.log_param("learning_rate", optimizer.defaults['lr'])
     mlflow.log_param("batch_size", train_loader.batch_size)
@@ -188,14 +198,18 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         history['accuracy'].append(epoch_acc)
         history['val_accuracy'].append(val_acc)
         
+        example_input, example_output = example_data_loader()
+        signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
+
         print(f'Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
         
         # Early stopping
         if callbacks['best_loss'] is None or val_loss < callbacks['best_loss'] - callbacks['min_delta']:
             callbacks['best_loss'] = val_loss
             callbacks['counter'] = 0
-            torch.save(model.state_dict(), callbacks['checkpoint_path'])
+            best_model = model
             print('val_loss improved, saving model')
+
         else:
             callbacks['counter'] += 1
             if callbacks['counter'] >= callbacks['patience']:
@@ -204,7 +218,14 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
                 break
 
     # Log the model to MLflow at the end of training
-    mlflow.pytorch.log_model(model, "model")
+    torch.save(best_model.state_dict(), callbacks['checkpoint_path'])
+
+    mlflow.pytorch.log_model(best_model, 
+                        artifact_path = "model",
+                        signature = signature,
+                        registered_model_name = "Classification-row-images"
+                        )
+
 
     # Log the total average training time per step for all epochs
     overall_avg_time_per_step = total_training_time / total_steps
@@ -213,7 +234,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
     return history
 
 if __name__ == "__main__":
-    print("\n", "\n", "Classifier training script", "\n")
+    print("\n", "\n","Classifier training script", "\n")
 
     # Setup
     set_seed()
