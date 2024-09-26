@@ -209,7 +209,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
             callbacks['counter'] = 0
             best_model = model
             print('val_loss improved, saving model')
-
+            
         else:
             callbacks['counter'] += 1
             if callbacks['counter'] >= callbacks['patience']:
