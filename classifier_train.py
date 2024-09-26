@@ -214,6 +214,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
             callbacks['counter'] += 1
             if callbacks['counter'] >= callbacks['patience']:
                 callbacks['early_stop'] = True
+                callbacks['counter'] = 0
                 print("Early stopping")
                 break
 
