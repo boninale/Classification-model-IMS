@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from matplotlib import rcParams
 import mlflow
 import mlflow.pytorch
+import time
+from datetime import datetime
 
 def set_seed(seed=31415):
     """Set random seed for reproducibility."""
@@ -105,24 +107,28 @@ def plot_history(history_df, save=True):
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, callbacks, device):
     """Train the model."""
-    # Set the tracking URI to the current directory
-    # mlflow.set_tracking_uri(uri="http://127.0.0.1:7000")    
-    # print("MLflow tracking URI set to:", mlflow.get_tracking_uri())
-    # Start MLflow run
 
-    with mlflow.start_run() as run:
+    mlflow.set_experiment('Classification-row-images')
+
+
+    with mlflow.start_run(run_name=f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}") as run:
         # Log model parameters (e.g., hyperparameters)
         mlflow.log_param("learning_rate", optimizer.defaults['lr'])
         mlflow.log_param("batch_size", train_loader.batch_size)
         mlflow.log_param("epochs", epochs)
 
         # Set some tags for metadata
+        
         mlflow.set_tag("model_type", "EfficientNetB0")
-        mlflow.set_tag("note", "First run using MLflow")
+        #mlflow.set_tag("note", "First run using MLflow")
+
+        total_training_time = 0  # Track total training time for all epochs
+        total_steps = 0  # Track total steps across all epochs
 
         history = {'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []}
 
         for epoch in range(epochs):
+            start_time = time.time()  # Start timing the epoch
             model.train()
             running_loss = 0.0
             correct = 0
@@ -140,6 +146,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
                 _, predicted = torch.max(outputs, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+
+            end_time = time.time()  # End timing the epoch
             
             epoch_loss = running_loss / len(train_loader.dataset)
             epoch_acc = correct / total
@@ -162,7 +170,18 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
             
             val_loss = val_loss / len(val_loader.dataset)
             val_acc = val_correct / val_total
+
             
+            epoch_training_time = end_time - start_time
+            total_training_time += epoch_training_time
+            steps_in_epoch = len(train_loader)  # Total steps for this epoch (batches)
+            total_steps += steps_in_epoch
+            
+            # Log the average training time per step for this epoch
+            avg_time_per_step = epoch_training_time / steps_in_epoch
+
+            # Log metrics to MLflow
+            mlflow.log_metric("avg_time_per_step", avg_time_per_step, step=epoch)
             mlflow.log_metric("train_loss", epoch_loss, step=epoch)
             mlflow.log_metric("train_accuracy", epoch_acc, step=epoch)
             mlflow.log_metric("val_loss", val_loss, step=epoch)
@@ -190,7 +209,11 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
 
         # Log the model to MLflow at the end of training
         mlflow.pytorch.log_model(model, "model")
-        
+
+        # Log the total average training time per step for all epochs
+        overall_avg_time_per_step = total_training_time / total_steps
+        mlflow.log_metric("overall_avg_time_per_step", overall_avg_time_per_step)
+            
         return history
 
 if __name__ == "__main__":
