@@ -2,6 +2,11 @@ __pycache__
 datasets
 tensorflow
 venv
+<<<<<<< Updated upstream
+=======
+graphs
+mlruns
+>>>>>>> Stashed changes
 changename.py
 code.txt
 stratified_sampling.py

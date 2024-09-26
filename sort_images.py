@@ -26,7 +26,7 @@ def create_model():
 model = create_model()
 
 # Load the trained model state dictionary
-model.load_state_dict(torch.load('models/EffNetB0_classifier_2.pth', map_location=torch.device('cpu')))
+model.load_state_dict(torch.load('models/EffNetB0_classifier_14.pth', map_location=torch.device('cpu')))
 model.eval()
 
 

@@ -75,11 +75,12 @@ def get_callbacks(savepath):
         'best_loss': None,
         'early_stop': False
     }
-    
-    existing_files = [f for f in os.listdir(savepath) if f.startswith('EffNetB0_classifier') and f.endswith('.pth')]
-    file_number = len(existing_files) + 1
 
+<<<<<<< Updated upstream
     checkpoint_path = os.path.join(savepath, 'EffNetB0_classifier_{file_number}.pth')
+=======
+    checkpoint_path = os.path.join(savepath, f'{run_name}.pth')
+>>>>>>> Stashed changes
     
     return early_stopping, checkpoint_path
 
@@ -164,12 +165,34 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
                 callbacks['early_stop'] = True
                 print("Early stopping")
                 break
+<<<<<<< Updated upstream
     
     return history
 
 if __name__ == "__main__":
     print("\n", "\n", "Classifier training script", "\n")
     
+=======
+
+    # Log the model to MLflow at the end of training
+    torch.save(best_model.state_dict(), callbacks['checkpoint_path'])
+
+    mlflow.pytorch.log_model(best_model, 
+                        artifact_path = "model",
+                        registered_model_name = "Classification-row-images",
+                        pip_requirements = ['torch==2.1.0', 'cloudpickle==2.0.0']
+                        )
+
+    # Log the total average training time per step for all epochs
+    overall_avg_time_per_step = total_training_time / total_steps
+    mlflow.log_metric("overall_avg_time_per_step", overall_avg_time_per_step)
+        
+    return history
+
+if __name__ == "__main__":
+    print("\n","\n","Classifier training script", "\n")
+
+>>>>>>> Stashed changes
     # Setup
     set_seed()
     setup_matplotlib()
@@ -201,10 +224,19 @@ if __name__ == "__main__":
         
     print("Training...", "\n")
 
+<<<<<<< Updated upstream
     # Train the model
     history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
 
     history_df = pd.DataFrame(history).fillna(np.nan)
+=======
+    mlflow.set_experiment('Classification-row-images')
+    run = f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+
+    with mlflow.start_run(run_name=f"{run}") as run:
+        run_name = f"{run}-0.001"
+        with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
+>>>>>>> Stashed changes
 
     plot_history(history_df, save=False)
 
@@ -226,10 +258,16 @@ if __name__ == "__main__":
 
     history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
 
+<<<<<<< Updated upstream
     plot_history(history_df, save=True)
+=======
+        run_name = f"{run}-0.0001"
+        with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
+>>>>>>> Stashed changes
 
     print("\n", "NOW FINE TUNING THE MODEL", "\n")
 
+<<<<<<< Updated upstream
     # Unfreeze some layers and fine-tune the model
     for param in model.parameters():
         param.requires_grad = True
@@ -240,6 +278,26 @@ if __name__ == "__main__":
     # Continue training the model
     history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
     
+=======
+        history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
+
+        plot_history(history_df, save=True)
+
+        print("\n", "NOW FINE TUNING THE MODEL", "\n")
+
+        # Unfreeze some layers and fine-tune the model
+        for param in model.parameters():
+            param.requires_grad = True
+        
+        # Recompile the model with a lower learning rate
+        optimizer = optim.Adam(model.parameters(), lr=0.0001)
+
+        run_name = f"{run}-finetuning"
+        with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
+            # Continue training the model
+            history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
+            
+>>>>>>> Stashed changes
     print('Training completed. Model saved to:', SAVEPATH, '\n')
     
     history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
