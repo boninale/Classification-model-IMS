@@ -95,9 +95,7 @@ def plot_history(history_df, save=True):
     plt.ylabel('Loss')
 
     if save:
-        existing_files = [f for f in os.listdir(graphs_folder) if f.startswith('training_validation_loss') and f.endswith('.png')]
-        file_number = len(existing_files) + 1
-        save_path = os.path.join(graphs_folder, f'training_validation_loss_{file_number}.png')
+        save_path = os.path.join(graphs_folder, f'{run_name}.png')
         plt.savefig(save_path)
 
     plt.show()
@@ -121,7 +119,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
     mlflow.log_param("learning_rate", optimizer.defaults['lr'])
     mlflow.log_param("batch_size", train_loader.batch_size)
     mlflow.log_param("epochs", epochs)
-
+    mlflow.log_param("patience", early_stopping['patience'])
     # Set some tags for metadata
     
     mlflow.set_tag("model_type", "EfficientNetB0")
@@ -226,17 +224,23 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
                 print("Early stopping")
                 break
 
-    example_input, example_output = example_data_loader()
-    signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
-    
+   
     # Log the model to MLflow at the end of training
     torch.save(best_model.state_dict(), callbacks['checkpoint_path'])
 
-    mlflow.pytorch.log_model(best_model, 
-                        artifact_path = "model",
-                        signature = signature,
-                        registered_model_name = "Classification-row-images"
-                        )
+     # example_input, example_output = example_data_loader()
+    # signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
+
+    # mlflow.pytorch.log_model(best_model, 
+    #                     artifact_path="model",
+    #                     signature=signature,
+    #                     registered_model_name="Classification-row-images" 
+    #                     )
+
+
+    # Log validation metrics as tags
+    for i, recall in enumerate(recall_per_class):
+        mlflow.set_tag(f"val_recall_{class_names[i]}", recall)
 
     # Log the total average training time per step for all epochs
     overall_avg_time_per_step = total_training_time / total_steps
@@ -261,7 +265,7 @@ if __name__ == "__main__":
     # Constants
     IMG_SIZE = (224, 224)
     BATCH_SIZE = 20
-    EPOCHS = 5
+    EPOCHS = 30
     DATAPATH = 'datasets/classification_balanced'
     SAVEPATH = 'models'
 
