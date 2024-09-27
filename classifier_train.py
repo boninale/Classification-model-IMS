@@ -74,7 +74,7 @@ def create_model(img_size):
 def get_callbacks(savepath):
     """Create callbacks for training."""
     early_stopping = {
-        'patience': 5,
+        'patience': 10,
         'min_delta': 0.001,
         'counter': 0,
         'best_loss': None,
@@ -83,8 +83,6 @@ def get_callbacks(savepath):
 
     checkpoint_path = os.path.join(savepath, f'{run_name}.pth')
 
-
-    
     return early_stopping, checkpoint_path
 
 def plot_history(history_df, save=True):
@@ -133,6 +131,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
     history = {'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []}
 
     for epoch in range(epochs):
+
         start_time = time.time()  # Start timing the epoch
         model.train()
         running_loss = 0.0
@@ -196,9 +195,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         history['val_loss'].append(val_loss)
         history['accuracy'].append(epoch_acc)
         history['val_accuracy'].append(val_acc)
-        
-        example_input, example_output = example_data_loader()
-        signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
 
         print(f'Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
         
@@ -217,12 +213,9 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
                 print("Early stopping")
                 break
 
-    return history
-
-
-if __name__ == "__main__":
-    print("\n","\n","Classifier training script", "\n")
-
+    example_input, example_output = example_data_loader()
+    signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
+    
     # Log the model to MLflow at the end of training
     torch.save(best_model.state_dict(), callbacks['checkpoint_path'])
 
@@ -232,15 +225,21 @@ if __name__ == "__main__":
                         registered_model_name = "Classification-row-images"
                         )
 
-
     # Log the total average training time per step for all epochs
     overall_avg_time_per_step = total_training_time / total_steps
     mlflow.log_metric("overall_avg_time_per_step", overall_avg_time_per_step)
-        
+    
+
+    return history
+
+
+if __name__ == "__main__":
+    print("\n","\n","Classifier training script", "\n")
+
     # Setup
     set_seed()
     setup_matplotlib()
-        
+ 
     # Create the graphs folder if it doesn't exist
     graphs_folder = 'graphs'
     if not os.path.exists(graphs_folder):
@@ -262,87 +261,62 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    # Define callbacks
-    early_stopping, checkpoint_path = get_callbacks(SAVEPATH)
-    early_stopping['checkpoint_path'] = checkpoint_path
-        
-    print("Training...", "\n")
-
-
-    # Train the model
-    history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-
-    history_df = pd.DataFrame(history).fillna(np.nan)
+    best_model = model
 
     mlflow.set_experiment('Classification-row-images')
-    run = f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    run_dt = f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
-    with mlflow.start_run(run_name=f"{run}") as run:
-        run_name = f"{run}-0.001"
-        with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
-            # Recompile the model with a lower learning rate
-            optimizer = optim.Adam(model.parameters(), lr=0.0001)
-            
-            # Define early stopping callback for fine-tuning
-            early_stopping['patience'] = 5
-            early_stopping['min_delta'] = 0.0001
-            early_stopping['counter'] = 0
-            early_stopping['early_stop'] = False
-            
-            print("Continuing with lower learning rate ...", "\n")
-            with mlflow.start_run(run_name=f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-0.001", nested = True) as run:
+    print("Training...", "\n")
 
-                # Continue training the model
-                history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-                
-            print('Training completed. Model saved to:', SAVEPATH, '\n')
+    with mlflow.start_run(run_name=f"{run_dt}") as run:
 
-            history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
+        run_name = f"{run_dt}-0.001"  
 
-            plot_history(history_df, save=True)
-
-            print("\n", "NOW FINE TUNING THE MODEL", "\n")
-
-            # Unfreeze some layers and fine-tune the model
-            for param in model.parameters():
-                param.requires_grad = True
-            
-            # Recompile the model with a lower learning rate
-            optimizer = optim.Adam(model.parameters(), lr=0.0001)
-
-            with mlflow.start_run(run_name=f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}-finetuning", nested = True) as run:
-                # Continue training the model
-                history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-                
-        print('Training completed. Model saved to:', SAVEPATH, '\n')
+        # Define early stopping callback
+        early_stopping, checkpoint_path = get_callbacks(SAVEPATH)
+        early_stopping['checkpoint_path'] = checkpoint_path
         
-        history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
+        with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
 
-        plot_history(history_df, save=True)
+            # Train the model
+            history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
 
-        run_name = f"{run}-0.0001"
+        history_df = pd.DataFrame(history).fillna(np.nan)
+        plot_history(history_df, save=False)
+
+        # Recompile the model with a lower learning rate
+        optimizer = optim.Adam(model.parameters(), lr=0.0001)
+
+        # Define early stopping callback for fine-tuning
+        early_stopping['min_delta'] = 0.0001
+        early_stopping['counter'] = 0
+        early_stopping['early_stop'] = False
+
+        run_name = f"{run_dt}-0.0001"
 
         with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
 
-            print("\n", "NOW FINE TUNING THE MODEL", "\n")
-            history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
+            print("\n","Continuing with lower learning rate...", "\n")
+            history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
 
-            plot_history(history_df, save=True)
+        history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
+        plot_history(history_df, save=False)
 
-            print("\n", "NOW FINE TUNING THE MODEL", "\n")
+        print("\n", "NOW FINE-TUNING THE MODEL", "\n")
 
-            # Unfreeze some layers and fine-tune the model
-            for param in model.parameters():
+        # Unfreeze some layers and fine-tune the model
+        for param in model.parameters():
                 param.requires_grad = True
-            
-            # Recompile the model with a lower learning rate
-            optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
-            run_name = f"{run}-finetuning"
-            with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
-                # Continue training the model
-                history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-                
+        # Recompile the model with a lower learning rate
+        optimizer = optim.Adam(model.parameters(), lr=0.0001)
+
+        run_name = f"{run_dt}-finetuning"
+        with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
+
+            # Continue training the model
+            history = train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
+            
     print('Training completed. Model saved to:', SAVEPATH, '\n')    
     history_df = pd.concat([history_df, pd.DataFrame(history).fillna(np.nan)], ignore_index=True)
 
