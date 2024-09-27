@@ -15,6 +15,8 @@ import mlflow.pytorch
 from mlflow.models import infer_signature
 import time
 from datetime import datetime
+from sklearn.metrics import recall_score
+
 
 def set_seed(seed=31415):
     """Set random seed for reproducibility."""
@@ -156,10 +158,14 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         epoch_loss = running_loss / len(train_loader.dataset)
         epoch_acc = correct / total
         
+        #### MODEL EVALUATION ####
         model.eval()
         val_loss = 0.0
         val_correct = 0
         val_total = 0
+        all_labels = []
+        all_predictions = []
+    
         
         with torch.no_grad():
             for inputs, labels in val_loader:
@@ -171,11 +177,18 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
                 _, predicted = torch.max(outputs, 1)
                 val_total += labels.size(0)
                 val_correct += (predicted == labels).sum().item()
+                all_labels.extend(labels.cpu().numpy())
+                all_predictions.extend(predicted.cpu().numpy())
+    
         
         val_loss = val_loss / len(val_loader.dataset)
         val_acc = val_correct / val_total
 
-        
+        # Calculate recall for each class
+        recall_per_class = recall_score(all_labels, all_predictions, average=None)
+        for i, recall in enumerate(recall_per_class):
+            mlflow.log_metric(f"val_recall_{class_names[i]}", recall, step=epoch)
+         
         epoch_training_time = end_time - start_time
         total_training_time += epoch_training_time
         steps_in_epoch = len(train_loader)  # Total steps for this epoch (batches)
@@ -248,9 +261,11 @@ if __name__ == "__main__":
     # Constants
     IMG_SIZE = (224, 224)
     BATCH_SIZE = 20
-    EPOCHS = 30
+    EPOCHS = 5
     DATAPATH = 'datasets/classification_balanced'
     SAVEPATH = 'models'
+
+    class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     
     # Create data generators
     train_loader, val_loader = create_data_generators(DATAPATH, IMG_SIZE, BATCH_SIZE)
