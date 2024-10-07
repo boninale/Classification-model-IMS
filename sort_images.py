@@ -2,10 +2,51 @@ import os
 import shutil
 import numpy as np
 import torch
+import sys
+import argparse
+from tqdm import tqdm
 from torchvision import transforms, models
 from torchvision.transforms import v2
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import torch.nn as nn
+
+### INITIALIZATION ###
+
+def create_parser():
+    # Create an argument parser
+    parser = argparse.ArgumentParser('Generate attention maps for new images')
+    parser.add_argument('--data', '-d',type = str, default='datasets',help='Input directory containing new images')
+    parser.add_argument('--output', '-o',type = str, default='',help='Output directory to save sorted images')
+
+    return parser
+
+
+if len(sys.argv)==0:
+    print("Usage: python sort_images.py [parameters]\nFor more info about parameters run sort_images.py -h or --help")
+    exit()
+else:
+    parser = create_parser()
+    globalconfig=parser.parse_args() # Parse argument list
+
+    # Attribute the arguments to corresponding variables
+    new_data_path = globalconfig.data
+
+    if globalconfig.output == '':
+        output_path = f'{new_data_path}/sorted'
+    else : 
+        output_path = globalconfig.output
+
+    # Print the parsed arguments (optional, for verification)
+    print("\n",f"Input directory: {new_data_path}","\n")
+    print(f"Output directory: {output_path}","\n")
+
+# Define image size 
+IMG_SIZE = (224, 224)
+
+# Create directories for each class
+class_names = ['missing_vine', 'turn','vine']
+for class_name in class_names:
+    os.makedirs(os.path.join(output_path, class_name), exist_ok=True)
 
 # Define the model architecture
 def create_model():
@@ -30,18 +71,6 @@ model.load_state_dict(torch.load('models/EffNetB0_classifier_14.pth', map_locati
 model.eval()
 
 
-# Define image size and path to new data
-IMG_SIZE = (224, 224)
-new_data_path = 'datasets/test'
-output_path = 'datasets/sorted'
-
-# Create directories for each class
-class_names = ['missing_vine', 'turn','vine']
-for class_name in class_names:
-    os.makedirs(os.path.join(output_path, class_name), exist_ok=True)
-
-print('loading images...')
-
 # Define the image preprocessing function
 preprocess = transforms.Compose([
     transforms.Resize(IMG_SIZE),
@@ -59,25 +88,29 @@ def preprocess_image(image_path):
 # Get list of new images
 new_images = [os.path.join(new_data_path, fname) for fname in os.listdir(new_data_path) if fname.endswith(('jpg', 'jpeg', 'png'))]
 
-print('Predicting...')
-
 # Make predictions and store them
 predictions = {}
 with torch.no_grad():
-    for image_path in new_images:
-        img_tensor = preprocess_image(image_path)
-        output = model(img_tensor)
-        _, predicted = torch.max(output, 1)
-        predicted_class = class_names[predicted.item()]
-        predictions[image_path] = predicted_class
+    for image_path in tqdm(new_images, desc="Predicting..."):
+        try:
+            img_tensor = preprocess_image(image_path)
+            output = model(img_tensor)
+            _, predicted = torch.max(output, 1)
+            predicted_class = class_names[predicted.item()]
+            predictions[image_path] = predicted_class
+        except UnidentifiedImageError:
+            print(f"Warning: Skipping corrupted image file {image_path}")
+        except Exception as e:
+            print(f"Error processing image {image_path}: {e}")
 
 print('Predictions complete!')
 
-# Display a sample of predictions
-for image_path in list(predictions.keys())[:5]:  # Display first 5 images
-    print(f'Image: {os.path.basename(image_path)}, Predicted Class: {predictions[image_path]}')
+# # Display a sample of predictions
+# for image_path in list(predictions.keys())[:5]:  # Display first 5 images
+#     print(f'Image: {os.path.basename(image_path)}, Predicted Class: {predictions[image_path]}')
 
-print('Moving images...')
 # Move images to the corresponding class folders
-for image_path, predicted_class in predictions.items():
+for image_path, predicted_class in tqdm(predictions.items(), desc="Moving images..."):
     shutil.copy(image_path, os.path.join(output_path, predicted_class, os.path.basename(image_path)))
+
+print(f'Moved images to {output_path}')
