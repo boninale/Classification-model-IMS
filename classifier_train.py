@@ -55,11 +55,13 @@ def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0
         
         # Split the dataset
         train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+
     elif val_path:  
         train_dataset = full_dataset
         val_dataset = datasets.ImageFolder(root=val_path, transform=transform)
+        print(f'Using validation set from {val_path}')
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     return train_loader, val_loader
@@ -96,19 +98,17 @@ def create_model(model_path=None):
     
     return model
 
-def get_callbacks(savepath):
+def get_callbacks(patience):
     """Create callbacks for training."""
     early_stopping = {
-        'patience': 1,
+        'patience': patience,
         'min_delta': 0.001,
         'counter': 0,
         'best_loss': None,
         'early_stop': False
     }
 
-    checkpoint_path = os.path.join(savepath, f'{run_name}.pth')
-
-    return early_stopping, checkpoint_path
+    return early_stopping
 
 def example_data_loader():
     # Assuming typical input is a batch of images from the data loader
@@ -204,7 +204,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         mlflow.log_metric("val_accuracy", val_acc, step=epoch)
 
 
-        print(f'Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
+        print(f'Epoch {epoch}/{epochs} : Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
         
         # Early stopping
         if callbacks['best_loss'] is None or val_loss < callbacks['best_loss'] - callbacks['min_delta']:
@@ -264,10 +264,13 @@ if __name__ == "__main__":
     IMG_SIZE = (224, 224)
     BATCH_SIZE = 20
     EPOCHS = 30
+    PATIENCE = 10
     DATAPATH = 'datasets/ProspectFD/Minervois/CameraA/p0901_1433_A_balanced'
     SAVEPATH = 'models'
     VAL_PATH = 'datasets/test'
     model_path ='models/Run_2024-10-08_11-24-18.pth'
+
+    print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(SAVEPATH)["patience"]} \n - Data path: {DATAPATH} \n - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Pretrained Model: {model_path != None} \n')
 
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     
@@ -301,7 +304,6 @@ if __name__ == "__main__":
 
     steps = 0
 
-    print("Training...", "\n")
 
     with mlflow.start_run(run_name=f"{run_dt}") as run:
         
@@ -310,8 +312,7 @@ if __name__ == "__main__":
         # Log model parameters (e.g., hyperparameters)
         mlflow.log_param("batch_size", train_loader.batch_size)
         mlflow.log_param("epochs", EPOCHS)
-        mlflow.log_param("patience", get_callbacks(SAVEPATH)[0]['patience'])
-
+        mlflow.log_param("patience", get_callbacks(PATIENCE)['patience'])
         # Set some tags for metadata
         mlflow.set_tag("model_type", "EfficientNetB0")
         #mlflow.set_tag("note", "First run using MLflow")
@@ -319,8 +320,8 @@ if __name__ == "__main__":
         run_name = f"{run_dt}-0.001"  
 
         # Define early stopping callback
-        early_stopping, checkpoint_path = get_callbacks(SAVEPATH)
-        early_stopping['checkpoint_path'] = checkpoint_path
+        early_stopping = get_callbacks(PATIENCE)
+    
         
         with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
             
