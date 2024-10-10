@@ -5,10 +5,10 @@ venv
 graphs
 graphs
 mlruns
-changename
+changename.py
 code.txt
 stratified_sampling.py
-sample
+sample.py
 
 
 
