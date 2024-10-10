@@ -36,7 +36,7 @@ def setup_matplotlib():
     rcParams['axes.spines.top'] = False
     rcParams['axes.spines.right'] = False
 
-def create_data_generators(datapath, batch_size=25, val_split=0.2):
+def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0.2, split = True):
     """Create training and validation data generators."""
     transform = transforms.Compose([
         v2.RandomResizedCrop(size=(224, 224), antialias=True),
@@ -48,28 +48,51 @@ def create_data_generators(datapath, batch_size=25, val_split=0.2):
     # Load the entire dataset
     full_dataset = datasets.ImageFolder(root=datapath, transform=transform)
     
-    # Calculate the number of samples for training and validation
-    val_size = int(len(full_dataset) * val_split)
-    train_size = len(full_dataset) - val_size
-    
-    # Split the dataset
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
-    
+    if split : 
+        # Calculate the number of samples for training and validation
+        val_size = int(len(full_dataset) * val_split)
+        train_size = len(full_dataset) - val_size
+        
+        # Split the dataset
+        train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+    elif val_path:  
+        train_dataset = full_dataset
+        val_dataset = datasets.ImageFolder(root=val_path, transform=transform)
+
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     return train_loader, val_loader
 
-def create_model():
+def create_model(model_path=None):
     """Create and compile the model."""
-    model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
-    num_ftrs = model.classifier[1].in_features
-    model.classifier = nn.Sequential(
-        nn.Linear(num_ftrs, 1024),
-        nn.ReLU(),
-        nn.Linear(1024, 3),
-        nn.Softmax(dim=1)
-    )
+    if model_path:
+        # Load the model architecture
+        model = models.efficientnet_b0(weights=None)
+        
+        # Modify the classifier
+        num_ftrs = model.classifier[1].in_features
+        model.classifier = nn.Sequential(
+            nn.Linear(num_ftrs, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 3),
+            nn.Softmax(dim=1)
+        )
+        
+        # Load the pretrained weights
+        model.load_state_dict(torch.load(model_path))
+    else:
+        # Create a new model with or without pretrained weights
+        model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
+        
+        # Modify the classifier
+        num_ftrs = model.classifier[1].in_features
+        model.classifier = nn.Sequential(
+            nn.Linear(num_ftrs, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 3),
+            nn.Softmax(dim=1)
+        )
     
     return model
 
@@ -241,24 +264,26 @@ if __name__ == "__main__":
     IMG_SIZE = (224, 224)
     BATCH_SIZE = 20
     EPOCHS = 30
-    DATAPATH = 'datasets/classification_balanced'
+    DATAPATH = 'datasets/ProspectFD/Minervois/CameraA/p0901_1433_A_balanced'
     SAVEPATH = 'models'
+    VAL_PATH = 'datasets/test'
+    model_path ='models/Run_2024-10-08_11-24-18.pth'
 
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     
     # Create data generators
-    train_loader, val_loader = create_data_generators(DATAPATH, BATCH_SIZE)
+    train_loader, val_loader = create_data_generators(DATAPATH, VAL_PATH, BATCH_SIZE ,split = False)
 
     # Create and compile the model
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("Device:", device, "\n")
-    model = create_model().to(device)
+    model = create_model(model_path).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     best_model = model.to(device)
 
-    mlflow.set_experiment('Classification-row-images')
+    mlflow.set_experiment('Classification-row-images-prospectFD')
     run_dt = f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
     metrics_to_retrieve = [ "val_loss", 
@@ -339,7 +364,7 @@ if __name__ == "__main__":
             metrics_log, steps = retrieve_metrics(metrics_to_retrieve)
 
         # Save the model
-        torch.save(model.state_dict(), os.path.join(SAVEPATH, f'{run_name}.pth'))
+        torch.save(model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
 
         # Log the model to MLflow
         example_input, example_output = example_data_loader()
@@ -348,7 +373,7 @@ if __name__ == "__main__":
         mlflow.pytorch.log_model(pytorch_model = best_model, 
                             artifact_path="model",
                             signature=signature,
-                            registered_model_name="Classification-row-images"
+                            registered_model_name="Classification-row-images-prospectFD"
                             )
 
         print('Training completed. Model saved to:', SAVEPATH, '\n')    
