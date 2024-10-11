@@ -18,7 +18,9 @@ import time
 from datetime import datetime
 from sklearn.metrics import recall_score
 
+from architectures import EffNetB0
 
+#region Functions
 def set_seed(seed=31415):
     """Set random seed for reproducibility."""
     np.random.seed(seed)
@@ -54,49 +56,6 @@ def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     return train_loader, val_loader
-
-def create_model(model_path=None):
-    """Create and compile the model."""
-    if model_path:
-        # Load the model architecture
-        model = models.efficientnet_b0(weights=None)
-        
-        num_ftrs = model.classifier[1].in_features
-
-        model.classifier = nn.Sequential(
-            nn.Linear(num_ftrs, 512),          # Linear bottleneck to reduce dimensionality
-            nn.SiLU(),                         # Swish activation function (SiLU is the PyTorch equivalent)
-            nn.LayerNorm(512),                 # Layer normalization for stability
-            nn.Dropout(p=0.4),                 # Regularization (adjust dropout rate if necessary)
-            nn.Linear(512, 256),               # Another dense layer with reduced size for better feature extraction
-            nn.SiLU(),                         # Activation again for non-linearity
-            nn.LayerNorm(256),                 # Layer normalization after each dense layer
-            nn.Dropout(p=0.3),                 # Dropout applied again for robustness
-            nn.Linear(256, 3),                 # Final classification layer
-        )
-
-        # Load the pretrained weights
-        model.load_state_dict(torch.load(model_path))
-    else:
-        # Create a new model with or without pretrained weights
-        model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
-        
-        # Modify the classifier
-        num_ftrs = model.classifier[1].in_features
-
-        model.classifier = nn.Sequential(
-            nn.Linear(num_ftrs, 512),          # Linear bottleneck to reduce dimensionality
-            nn.SiLU(),                         # Swish activation function (SiLU is the PyTorch equivalent)
-            nn.LayerNorm(512),                 # Layer normalization for stability
-            nn.Dropout(p=0.4),                 # Regularization (adjust dropout rate if necessary)
-            nn.Linear(512, 256),               # Another dense layer with reduced size for better feature extraction
-            nn.SiLU(),                         # Activation again for non-linearity
-            nn.LayerNorm(256),                 # Layer normalization after each dense layer
-            nn.Dropout(p=0.3),                 # Dropout applied again for robustness
-            nn.Linear(256, 3),                 # Final classification layer
-        )
-
-    return model
 
 def get_callbacks(patience):
     """Create callbacks for training."""
@@ -254,17 +213,16 @@ def retrieve_metrics(metrics_to_retrieve) :
 
     return metrics_log, steps 
 
+# endregion
+
 if __name__ == "__main__":
     print("\n","\n","Classifier training script", "\n")
+    
+    # region Initialization
 
     # Setup
     #set_seed()
- 
-    # Create the graphs folder if it doesn't exist
-    graphs_folder = 'graphs'
-    if not os.path.exists(graphs_folder):
-        os.makedirs(graphs_folder)
-    
+
     # Constants
     IMG_SIZE = (224, 224)
     BATCH_SIZE = 20
@@ -281,20 +239,19 @@ if __name__ == "__main__":
     print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(SAVEPATH)["patience"]} \n - Data path: {DATAPATH} \n - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Pretrained Model: {model_path != None} \n')
 
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
+    num_classes = len(class_names)
     
     # Create data generators
     train_loader, val_loader = create_data_generators(DATAPATH, VAL_PATH, BATCH_SIZE)
 
-
     # Create and compile the model
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("Device:", device, "\n")
-    model = create_model(model_path).to(device)
+    model = EffNetB0(num_classes, model_path).create_model()
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     scheduler1 = ExponentialLR(optimizer, gamma=0.95)
     scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.60, patience=PATIENCE//2)
-
     best_model = model.to(device)
 
     mlflow.set_experiment(experiment)
@@ -314,8 +271,10 @@ if __name__ == "__main__":
     # Initialize a dictionary to store the metrics
     metrics_log = {metric: [] for metric in metrics_to_retrieve}
 
-    steps = 0
+    # endregion
+    #region Training
 
+    steps = 0
 
     with mlflow.start_run(run_name=f"{run_dt}") as run:
         
@@ -327,7 +286,6 @@ if __name__ == "__main__":
         mlflow.log_param("patience", get_callbacks(PATIENCE)['patience'])
         mlflow.log_param("dataset", DATAPATH)
 
-
         # Set some tags for metadata
         mlflow.set_tag("model_type", model_type)
         #mlflow.set_tag("note", "First run using MLflow")
@@ -338,9 +296,6 @@ if __name__ == "__main__":
         # Train the model
         train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
         metrics_log, steps = retrieve_metrics(metrics_to_retrieve)
-        
-        # history_df = pd.DataFrame(history).fillna(np.nan)
-        # plot_history(history_df, save=False)
 
         print("\n", "NOW FINE-TUNING THE MODEL", "\n")
 
@@ -388,3 +343,4 @@ if __name__ == "__main__":
         for metric in metrics_to_retrieve:
             if max_val_accuracy_index < len(metrics_log[metric]):
                 mlflow.log_metric(metric, metrics_log[metric][max_val_accuracy_index].value, step=steps+1)
+        #endregion
