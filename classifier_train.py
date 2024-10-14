@@ -9,8 +9,6 @@ from torch.optim.lr_scheduler import ExponentialLR, ReduceLROnPlateau
 from torchvision.transforms import v2
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms, models
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
 import mlflow
 import mlflow.pytorch
 from mlflow.models import infer_signature
@@ -79,10 +77,16 @@ def example_data_loader():
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, callbacks, device):
     """Train the model."""
-    best_model = model.to(device)
+
+    best_model_wts = model.model.state_dict()
+    callbacks['best_loss'] = min_val_loss
+
+
+    model = model.to(device)
 
     total_training_time = 0  # Track total training time for all epochs
     total_steps = 0  # Track total steps across all epochs
+    callbacks['counter'] = 0
 
     # Log model parameters (e.g., hyperparameters)
     mlflow.log_param("batch_size", train_loader.batch_size)
@@ -152,7 +156,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         # Calculate recall for each class
         recall_per_class = recall_score(all_labels, all_predictions, average=None)
         for i, recall in enumerate(recall_per_class):
-            mlflow.log_metric(f"val_recall_{class_names[i]}", recall, step=epoch)
+            mlflow.log_metric(f"val_recall_{class_names[i]}", recall, step= STEPS + epoch)
          
         epoch_training_time = end_time - start_time
         total_training_time += epoch_training_time
@@ -163,12 +167,12 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         avg_time_per_step = epoch_training_time / steps_in_epoch
 
         # Log metrics to MLflow
-        mlflow.log_metric("avg_time_per_step", avg_time_per_step, step=epoch)
-        mlflow.log_metric("train_loss", epoch_loss, step=epoch)
-        mlflow.log_metric("train_accuracy", epoch_acc, step=epoch)
-        mlflow.log_metric("val_loss", val_loss, step=epoch)
-        mlflow.log_metric("val_accuracy", val_acc, step=epoch)
-        mlflow.log_metric("learning_rate", optimizer.param_groups[0]['lr'], step=epoch)
+        mlflow.log_metric("avg_time_per_step", avg_time_per_step, step=STEPS + epoch)
+        mlflow.log_metric("train_loss", epoch_loss, step=STEPS + epoch)
+        mlflow.log_metric("train_accuracy", epoch_acc, step=STEPS + epoch)
+        mlflow.log_metric("val_loss", val_loss, step=STEPS + epoch)
+        mlflow.log_metric("val_accuracy", val_acc, step=STEPS + epoch)
+        mlflow.log_metric("learning_rate", optimizer.param_groups[0]['lr'], step=STEPS + epoch)
 
 
         print(f'Epoch {epoch}/{epochs} : Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
@@ -177,7 +181,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         if callbacks['best_loss'] is None or val_loss < callbacks['best_loss']:
             callbacks['best_loss'] = val_loss
             callbacks['counter'] = 0
-            best_model = model
+            best_model_wts = model.model.state_dict()
             print('val_loss improved, saving model')
             
         else:
@@ -185,10 +189,11 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
             if callbacks['counter'] >= callbacks['patience']:
                 callbacks['early_stop'] = True
                 callbacks['counter'] = 0
-                model = best_model # Load the best model found during training
                 print("Early stopping")
                 break
-
+    
+    if best_model_wts is not None:
+        model.model.load_state_dict(best_model_wts)
 
     # Log validation metrics as tags
     for i, recall in enumerate(recall_per_class):
@@ -198,20 +203,19 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
     overall_avg_time_per_step = total_training_time / total_steps
     mlflow.log_metric("overall_avg_time_per_step", overall_avg_time_per_step)
 
-def retrieve_metrics(metrics_to_retrieve) :
+
+def get_metrics() :
     """Retrieve metrics from the MLflow run."""
     client = mlflow.tracking.MlflowClient()
     run_info = mlflow.active_run().info
     run_id = run_info.run_id
 
     # Collect run parameters and metrics
-    for metric in metrics_to_retrieve:
-        metric_history = client.get_metric_history(run_id, metric)
-        metrics_log[metric].extend(metric_history) #Append to previous history
+    steps = len(client.get_metric_history(run_id, "val_loss"))
+    min_val_loss = min([m.value for m in client.get_metric_history(run_id, "val_loss")])
+    max_val_acc = max([m.value for m in client.get_metric_history(run_id, "val_accuracy")])
 
-    steps = max(len(records) for records in metrics_log.values())
-
-    return metrics_log, steps 
+    return steps, min_val_loss, max_val_acc
 
 # endregion
 
@@ -227,14 +231,14 @@ if __name__ == "__main__":
     IMG_SIZE = (224, 224)
     BATCH_SIZE = 20
     EPOCHS = 30
-    PATIENCE = 10
-    DATAPATH = 'datasets/combined'
+    PATIENCE = 2
+    DATAPATH = 'datasets/ProspectFD/Minervois/CameraA/p0901_1433_A_balanced'
     SAVEPATH = 'models'
     VAL_PATH = None
-    model_path = 'models/Run_2024-10-14_11-24-14.pth'
-    new_model_name = 'Classification-row-images-prospectFD'
-    experiment = 'Classification-row-images-prospectFD'
-    model_type = 'optimized-head'
+    model_path = None
+    new_model_name = 'dev'
+    experiment = 'Classification-row-images-dev'
+    model_type = 'HeadV2'
 
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     num_classes = len(class_names)
@@ -250,7 +254,7 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     scheduler1 = ExponentialLR(optimizer, gamma=0.95)
     scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.60, patience=PATIENCE//2)
-    best_model = model.to(device)
+    best_model_wts = model.model.state_dict()
 
     print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(PATIENCE)["patience"]} \n - Data path: {DATAPATH} \n - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Pretrained Model: {model_path != None} \n')
 
@@ -274,7 +278,9 @@ if __name__ == "__main__":
     # endregion
     #region Training
 
-    steps = 0
+    STEPS = 0
+    min_val_loss = None
+    max_val_acc = None
 
     with mlflow.start_run(run_name=f"{run_dt}") as run:
         
@@ -295,7 +301,7 @@ if __name__ == "__main__":
     
         # Train the model
         train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-        metrics_log, steps = retrieve_metrics(metrics_to_retrieve)
+        STEPS , min_val_loss , max_val_acc = get_metrics()
 
         print("\n", "NOW FINE-TUNING THE MODEL", "\n")
 
@@ -308,21 +314,23 @@ if __name__ == "__main__":
         scheduler1 = ExponentialLR(optimizer, gamma=0.99)
         scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=PATIENCE//2)
 
-        run_name = f"{run_dt}-finetuning"
+        #run_name = f"{run_dt}-finetuning"
 
-        with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
+        #with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
             # Train the model
-            train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-            metrics_log, steps = retrieve_metrics(metrics_to_retrieve)
+        train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
+        STEPS , min_val_loss, max_val_acc = get_metrics()
 
+        mlflow.log_metric("val_accuracy", max_val_acc, step = STEPS)
+        
         # Save the model
-        torch.save(model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
+        torch.save(model.model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
 
         # Log the model to MLflow
         example_input, example_output = example_data_loader()
         signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
 
-        mlflow.pytorch.log_model(pytorch_model = best_model, 
+        mlflow.pytorch.log_model(pytorch_model = model, 
                             artifact_path="model",
                             signature=signature,
                             registered_model_name=new_model_name
@@ -330,17 +338,6 @@ if __name__ == "__main__":
 
         print('Training completed. Model saved to:', SAVEPATH, '\n')    
 
-        # Log the metrics and parameters to the main run
-        for step in range(steps):
-            for metric in metrics_to_retrieve:
-                if step < len(metrics_log[metric]):
-                    mlflow.log_metric(metric, metrics_log[metric][step].value, step=step)
-
-        # Find the index at which val_accuracy was the highest
-        max_val_accuracy_index = max(range(len(metrics_log['val_accuracy'])), key=lambda i: metrics_log['val_accuracy'][i].value)
-
-        # Log the metrics for the index at which val_accuracy was the highest
-        for metric in metrics_to_retrieve:
-            if max_val_accuracy_index < len(metrics_log[metric]):
-                mlflow.log_metric(metric, metrics_log[metric][max_val_accuracy_index].value, step=steps+1)
+       
         #endregion
+    mlflow.end_run()
