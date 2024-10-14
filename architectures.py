@@ -18,6 +18,7 @@ class EffNetB0(nn.Module):
         super(EffNetB0, self).__init__()
         self.model_path = model_path
         self.num_classes = num_classes
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Load with pretrained weights from ImageNet
         self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
@@ -38,7 +39,7 @@ class EffNetB0(nn.Module):
 
         if self.model_path:
             # Reload the model after changing the head to avoid potential conflicts
-            self.model.load_state_dict(torch.load(self.model_path))
+            self.model.load_state_dict(torch.load(self.model_path, map_location=device))
 
     def forward(self, x):
         return self.model(x)
@@ -50,6 +51,8 @@ class CombinedHeadModel(nn.Module):
         self.model_path = model_path
         self.num_classes = num_classes
         self.embedding_dim = embedding_dim
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
         self.backbone = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
 
@@ -87,7 +90,8 @@ class CombinedHeadModel(nn.Module):
 
         if self.model_path:
             # Load the model after changing the head
-            self.load_state_dict(torch.load(self.model_path))
+            self.load_state_dict(torch.load(self.model_path, weights_only=True, map_location=device))
+
 
     def forward(self, x):
         # Shared feature extraction
