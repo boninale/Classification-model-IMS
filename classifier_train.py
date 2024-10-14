@@ -18,7 +18,7 @@ import time
 from datetime import datetime
 from sklearn.metrics import recall_score
 
-from architectures import EffNetB0
+from architectures import EffNetB0, CombinedHeadModel
 
 #region Functions
 def set_seed(seed=31415):
@@ -57,7 +57,7 @@ def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0
     
     return train_loader, val_loader
 
-def get_callbacks(patience):
+def get_callbacks(patience = 10):
     """Create callbacks for training."""
     early_stopping = {
         'patience': patience,
@@ -228,15 +228,13 @@ if __name__ == "__main__":
     BATCH_SIZE = 20
     EPOCHS = 30
     PATIENCE = 10
-    DATAPATH = 'datasets/Luchey_balanced'
+    DATAPATH = 'datasets/combined'
     SAVEPATH = 'models'
     VAL_PATH = None
-    model_path = None
-    new_model_name = 'dev'
-    experiment = 'Classification-row-images-dev'
+    model_path = 'models/Run_2024-10-11_14-01-32.pth'
+    new_model_name = 'Classification-row-images-prospectFD'
+    experiment = 'Classification-row-images-prospectFD'
     model_type = 'EfficientNetB0-optihead'
-
-    print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(SAVEPATH)["patience"]} \n - Data path: {DATAPATH} \n - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Pretrained Model: {model_path != None} \n')
 
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     num_classes = len(class_names)
@@ -247,12 +245,14 @@ if __name__ == "__main__":
     # Create and compile the model
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("Device:", device, "\n")
-    model = EffNetB0(num_classes, model_path).create_model()
+    model = EffNetB0(num_classes, model_path)  #CombinedHeadModel(embedding_dim = 3, num_classes = 3, model_path = model_path)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     scheduler1 = ExponentialLR(optimizer, gamma=0.95)
     scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.60, patience=PATIENCE//2)
     best_model = model.to(device)
+
+    print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(PATIENCE)["patience"]} \n - Data path: {DATAPATH} \n - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Pretrained Model: {model_path != None} \n')
 
     mlflow.set_experiment(experiment)
     run_dt = f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"

@@ -19,15 +19,8 @@ class EffNetB0(nn.Module):
         self.model_path = model_path
         self.num_classes = num_classes
 
-        # Load the EfficientNetB0 model
-        if self.model_path:
-            # Load without pretrained weights if a model path is provided
-            self.model = models.efficientnet_b0(weights=None)
-            # Load pretrained weights from the provided path
-            self.model.load_state_dict(torch.load(self.model_path))
-        else:
-            # Load with pretrained weights from ImageNet
-            self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
+        # Load with pretrained weights from ImageNet
+        self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
 
         # Modify the classifier with custom layers
         num_ftrs = self.model.classifier[1].in_features
@@ -58,12 +51,7 @@ class CombinedHeadModel(nn.Module):
         self.num_classes = num_classes
         self.embedding_dim = embedding_dim
 
-        # EfficientNetB0 Backbone
-        if self.model_path:
-            self.backbone = models.efficientnet_b0(weights=None)
-            self.backbone.load_state_dict(torch.load(self.model_path))
-        else:
-            self.backbone = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
+        self.backbone = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
 
         # Remove the original classifier
         self.backbone.classifier = nn.Identity()
@@ -81,7 +69,7 @@ class CombinedHeadModel(nn.Module):
         # Head B: Embedding head
         self.fc_embedding = nn.Sequential(
             nn.Flatten(),  # Flatten (7x7x1280 -> 62720)
-            nn.Linear(100352, 1024),  # Intermediate layer
+            nn.Linear(62720, 1024),  # Intermediate layer
             nn.SiLU(),
             nn.LayerNorm(1024),
             nn.Dropout(p=0.4),
@@ -96,6 +84,10 @@ class CombinedHeadModel(nn.Module):
             nn.Dropout(p=0.3),
             nn.Linear(512, num_classes)  # Final prediction
         )
+
+        if self.model_path:
+            # Load the model after changing the head
+            self.load_state_dict(torch.load(self.model_path))
 
     def forward(self, x):
         # Shared feature extraction
