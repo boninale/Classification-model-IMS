@@ -2,38 +2,27 @@ import os
 import shutil
 import numpy as np
 import torch
+from tqdm import tqdm
 from torchvision import transforms, models
 from torchvision.transforms import v2
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+from architectures import EffNetB0
 import torch.nn as nn
 
-# Define the model architecture
-def create_model():
-    """Create and compile the model."""
-    model = models.efficientnet_b0(weights=None)  # Initialize model without pre-trained weights
-    
-    num_ftrs = model.classifier[1].in_features
-    model.classifier = nn.Sequential(
-        nn.Linear(num_ftrs, 1024),
-        nn.ReLU(),
-        nn.Linear(1024, 3),
-        nn.Softmax(dim=1)
-    )
-    
-    return model
+num_classes = 3
+model_path = 'models/Run_2024-10-14_10-55-08-corrected.pth'
 
-# Create the model instance
-model = create_model()
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print("Device:", device, "/n")
+model = EffNetB0(num_classes, model_path)
 
 # Load the trained model state dictionary
-model.load_state_dict(torch.load('models/EffNetB0_classifier_14.pth', map_location=torch.device('cpu')))
 model.eval()
-
 
 # Define image size and path to new data
 IMG_SIZE = (224, 224)
-new_data_path = 'datasets/test'
-output_path = 'datasets/sorted'
+new_data_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Minervois/CameraA/p0901_1526'
+output_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Minervois/CameraA/p0901_1526/sorted'
 
 # Create directories for each class
 class_names = ['missing_vine', 'turn','vine']
@@ -51,10 +40,14 @@ preprocess = transforms.Compose([
 
 # Load and preprocess new images
 def preprocess_image(image_path):
-    img = Image.open(image_path).convert('RGB')
-    img_tensor = preprocess(img)
-    img_tensor = img_tensor.unsqueeze(0)  # Add batch dimension
-    return img_tensor
+    try:
+        img = Image.open(image_path).convert('RGB')
+        img_tensor = preprocess(img)
+        img_tensor = img_tensor.unsqueeze(0)  # Add batch dimension
+        return img_tensor
+    except UnidentifiedImageError:
+        print(f"Skipping corrupted image: {image_path}")
+        return None
 
 # Get list of new images
 new_images = [os.path.join(new_data_path, fname) for fname in os.listdir(new_data_path) if fname.endswith(('jpg', 'jpeg', 'png'))]
@@ -64,12 +57,13 @@ print('Predicting...')
 # Make predictions and store them
 predictions = {}
 with torch.no_grad():
-    for image_path in new_images:
+    for image_path in tqdm(new_images, desc = 'Predicting') :
         img_tensor = preprocess_image(image_path)
-        output = model(img_tensor)
-        _, predicted = torch.max(output, 1)
-        predicted_class = class_names[predicted.item()]
-        predictions[image_path] = predicted_class
+        if img_tensor is not None :
+            output = model(img_tensor)
+            _, predicted = torch.max(output, 1)
+            predicted_class = class_names[predicted.item()]
+            predictions[image_path] = predicted_class
 
 print('Predictions complete!')
 
