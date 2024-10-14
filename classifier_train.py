@@ -231,10 +231,10 @@ if __name__ == "__main__":
     DATAPATH = 'datasets/combined'
     SAVEPATH = 'models'
     VAL_PATH = None
-    model_path = 'models/Run_2024-10-11_14-01-32.pth'
+    model_path = 'models/Run_2024-10-14_11-24-14.pth'
     new_model_name = 'Classification-row-images-prospectFD'
     experiment = 'Classification-row-images-prospectFD'
-    model_type = 'EfficientNetB0-optihead'
+    model_type = 'optimized-head'
 
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     num_classes = len(class_names)
