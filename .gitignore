@@ -3,14 +3,13 @@ datasets
 tensorflow
 venv
 graphs
-graphs
 mlruns
 models
 changename.py
 code.txt
 stratified_sampling.py
+testmodel.py
+archi_embedding.py
 sample.py
 utils
-
-
 
