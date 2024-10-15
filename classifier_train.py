@@ -26,6 +26,7 @@ def set_seed(seed=31415):
     os.environ['PYTHONHASHSEED'] = str(seed)
 
 def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0.2):
+
     """Create training and validation data generators."""
     transform = transforms.Compose([
         v2.RandomResizedCrop(size=(224, 224), antialias=True),
@@ -38,6 +39,7 @@ def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0
     full_dataset = datasets.ImageFolder(root=datapath, transform=transform)
     
     if val_path==None: 
+
         # Calculate the number of samples for training and validation
         val_size = int(len(full_dataset) * val_split)
         train_size = len(full_dataset) - val_size
@@ -59,6 +61,7 @@ def get_callbacks(patience = 10):
     """Create callbacks for training."""
     early_stopping = {
         'patience': patience,
+
         'counter': 0,
         'best_loss': None,
         'early_stop': False
@@ -77,10 +80,8 @@ def example_data_loader():
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, callbacks, device):
     """Train the model."""
-
     best_model_wts = model.model.state_dict()
     callbacks['best_loss'] = min_val_loss
-
 
     model = model.to(device)
 
@@ -174,7 +175,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         mlflow.log_metric("val_accuracy", val_acc, step=STEPS + epoch)
         mlflow.log_metric("learning_rate", optimizer.param_groups[0]['lr'], step=STEPS + epoch)
 
-
         print(f'Epoch {epoch}/{epochs} : Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
         
         # Early stopping
@@ -189,9 +189,10 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
             if callbacks['counter'] >= callbacks['patience']:
                 callbacks['early_stop'] = True
                 callbacks['counter'] = 0
+                model = best_model # Load the best model found during training
                 print("Early stopping")
                 break
-    
+                
     if best_model_wts is not None:
         model.model.load_state_dict(best_model_wts)
 
@@ -219,6 +220,21 @@ def get_metrics() :
 
 # endregion
 
+def retrieve_metrics(metrics_to_retrieve) :
+    """Retrieve metrics from the MLflow run."""
+    client = mlflow.tracking.MlflowClient()
+    run_info = mlflow.active_run().info
+    run_id = run_info.run_id
+
+    # Collect run parameters and metrics
+    for metric in metrics_to_retrieve:
+        metric_history = client.get_metric_history(run_id, metric)
+        metrics_log[metric].extend(metric_history) #Append to previous history
+
+    steps = max(len(records) for records in metrics_log.values())
+
+    return metrics_log, steps 
+
 if __name__ == "__main__":
     print("\n","\n","Classifier training script", "\n")
     
@@ -239,7 +255,6 @@ if __name__ == "__main__":
     new_model_name = 'dev'
     experiment = 'Classification-row-images-dev'
     model_type = 'HeadV2'
-
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     num_classes = len(class_names)
     
@@ -274,7 +289,6 @@ if __name__ == "__main__":
     
     # Initialize a dictionary to store the metrics
     metrics_log = {metric: [] for metric in metrics_to_retrieve}
-
     # endregion
     #region Training
 
@@ -325,7 +339,6 @@ if __name__ == "__main__":
         
         # Save the model
         torch.save(model.model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
-
         # Log the model to MLflow
         example_input, example_output = example_data_loader()
         signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
@@ -341,3 +354,4 @@ if __name__ == "__main__":
        
         #endregion
     mlflow.end_run()
+

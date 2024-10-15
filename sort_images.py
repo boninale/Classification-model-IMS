@@ -54,8 +54,6 @@ def preprocess_image(image_path):
 # Get list of new images
 new_images = [os.path.join(new_data_path, fname) for fname in os.listdir(new_data_path) if fname.endswith(('jpg', 'jpeg', 'png'))]
 
-print('Predicting...')
-
 # Make predictions and store them
 predictions = {}
 with torch.no_grad():
@@ -66,14 +64,19 @@ with torch.no_grad():
             _, predicted = torch.max(output, 1)
             predicted_class = class_names[predicted.item()]
             predictions[image_path] = predicted_class
+        except UnidentifiedImageError:
+            print(f"Warning: Skipping corrupted image file {image_path}")
+        except Exception as e:
+            print(f"Error processing image {image_path}: {e}")
 
 print('Predictions complete!')
 
-# Display a sample of predictions
-for image_path in list(predictions.keys())[:5]:  # Display first 5 images
-    print(f'Image: {os.path.basename(image_path)}, Predicted Class: {predictions[image_path]}')
+# # Display a sample of predictions
+# for image_path in list(predictions.keys())[:5]:  # Display first 5 images
+#     print(f'Image: {os.path.basename(image_path)}, Predicted Class: {predictions[image_path]}')
 
-print('Moving images...')
 # Move images to the corresponding class folders
-for image_path, predicted_class in predictions.items():
+for image_path, predicted_class in tqdm(predictions.items(), desc="Moving images..."):
     shutil.copy(image_path, os.path.join(output_path, predicted_class, os.path.basename(image_path)))
+
+print(f'Moved images to {output_path}')
