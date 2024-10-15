@@ -9,20 +9,21 @@ from PIL import Image, UnidentifiedImageError
 from architectures import EffNetB0
 import torch.nn as nn
 
+# Define image size and path to new data
+IMG_SIZE = (224, 224)
+new_data_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Reparsac-machine-20211007/p1007_0825'
+output_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Reparsac-machine-20211007/p1007_0825/sorted'
 num_classes = 3
-model_path = 'models/Run_2024-10-14_10-55-08-corrected.pth'
+model_path = 'models/Run_2024-10-15_09-11-23.pth'
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Device:", device, "/n")
-model = EffNetB0(num_classes, model_path)
+model = EffNetB0(num_classes, model_path).to(device)
+
+print(f'Model loaded from {model_path} \n')
 
 # Load the trained model state dictionary
 model.eval()
-
-# Define image size and path to new data
-IMG_SIZE = (224, 224)
-new_data_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Minervois/CameraA/p0901_1526'
-output_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Minervois/CameraA/p0901_1526/sorted'
 
 # Create directories for each class
 class_names = ['missing_vine', 'turn','vine']
@@ -44,6 +45,7 @@ def preprocess_image(image_path):
         img = Image.open(image_path).convert('RGB')
         img_tensor = preprocess(img)
         img_tensor = img_tensor.unsqueeze(0)  # Add batch dimension
+        img_tensor = img_tensor.to(device)
         return img_tensor
     except UnidentifiedImageError:
         print(f"Skipping corrupted image: {image_path}")
