@@ -6,19 +6,19 @@ from tqdm import tqdm
 from torchvision import transforms, models
 from torchvision.transforms import v2
 from PIL import Image, UnidentifiedImageError
-from architectures import EffNetB0
+from architectures import EffNetB0, TLregularizer
 import torch.nn as nn
 
 # Define image size and path to new data
 IMG_SIZE = (224, 224)
-new_data_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Reparsac-machine-20211007/p1007_0825'
-output_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Reparsac-machine-20211007/p1007_0825/sorted'
+new_data_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Minervois/CameraA/p0901_1526'
+output_path = 'C:/Users/Alexandre Bonin/Documents/Stage/datasets/ProspectFD/Minervois/CameraA/p0901_1526/sorted_TL'
 num_classes = 3
-model_path = 'models/Run_2024-10-15_09-11-23.pth'
+model_path = 'models/Run_2024-10-15_14-06-31.pth'
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print("Device:", device, "/n")
-model = EffNetB0(num_classes, model_path).to(device)
+print("Device:", device, "\n")
+model = TLregularizer(num_classes, model_path).to(device)
 
 print(f'Model loaded from {model_path} \n')
 
@@ -59,15 +59,16 @@ predictions = {}
 with torch.no_grad():
     for image_path in tqdm(new_images, desc = 'Predicting') :
         img_tensor = preprocess_image(image_path)
-        if img_tensor is not None :
-            output = model(img_tensor)
-            _, predicted = torch.max(output, 1)
-            predicted_class = class_names[predicted.item()]
-            predictions[image_path] = predicted_class
-        except UnidentifiedImageError:
-            print(f"Warning: Skipping corrupted image file {image_path}")
-        except Exception as e:
-            print(f"Error processing image {image_path}: {e}")
+        if img_tensor is not None:
+            try:
+                output = model(img_tensor)
+                _, predicted = torch.max(output, 1)
+                predicted_class = class_names[predicted.item()]
+                predictions[image_path] = predicted_class
+            except UnidentifiedImageError:
+                print(f"Warning: Skipping corrupted image file {image_path}")
+            except Exception as e:
+                print(f"Error processing image {image_path}: {e}")
 
 print('Predictions complete!')
 
