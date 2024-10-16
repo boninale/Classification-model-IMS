@@ -25,10 +25,10 @@ def set_seed(seed=31415):
     torch.manual_seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
 
-def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0.2):
+def create_data_generators(datapath, val_path = None, batch_size=64, val_split=0.2, IMG_SIZE = (224, 224), num_workers = 4):
     """Create training and validation data generators."""
     transform = transforms.Compose([
-        v2.RandomResizedCrop(size=(224, 224), antialias=True),
+        v2.Resize(size=IMG_SIZE, antialias=True),
         v2.RandomHorizontalFlip(p=0.5),
         v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)]),
         v2.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -50,8 +50,8 @@ def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0
         val_dataset = datasets.ImageFolder(root=val_path, transform=transform)
         print(f'Using validation set from {val_path}')
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=num_workers)
     
     return train_loader, val_loader
 
@@ -226,10 +226,11 @@ if __name__ == "__main__":
 
     # Setup
     set_seed()
+    os.environ["MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING"] = "true"
 
     # Constants
     IMG_SIZE = (224, 224)
-    BATCH_SIZE = 20
+    BATCH_SIZE = 64 #Use powers of 2 ie 32, 64, 128, 256
     EPOCHS = 30
     PATIENCE = 10
     DATAPATH = 'datasets/combined'
@@ -238,7 +239,7 @@ if __name__ == "__main__":
     model_path = None
     new_model_name = 'Classification-row-images-prospectFD'
     experiment = 'Classification-row-images-prospectFD'
-    model_type = 'TLregularizer' #'EffNetB0'
+    model_type = 'EffNetB0' #'TLregularizer'
 
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     num_classes = len(class_names)
