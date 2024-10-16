@@ -80,7 +80,7 @@ def example_data_loader():
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, callbacks, device):
     """Train the model."""
-    best_model_wts = model.model.state_dict()
+    best_model_wts = model.state_dict()
     callbacks['best_loss'] = min_val_loss
 
     model = model.to(device)
@@ -181,7 +181,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         if callbacks['best_loss'] is None or val_loss < callbacks['best_loss']:
             callbacks['best_loss'] = val_loss
             callbacks['counter'] = 0
-            best_model_wts = model.model.state_dict()
+            best_model_wts = model.state_dict()
             print('val_loss improved, saving model')
             
         else:
@@ -189,12 +189,11 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
             if callbacks['counter'] >= callbacks['patience']:
                 callbacks['early_stop'] = True
                 callbacks['counter'] = 0
-                model = best_model # Load the best model found during training
                 print("Early stopping")
                 break
                 
     if best_model_wts is not None:
-        model.model.load_state_dict(best_model_wts)
+        model.load_state_dict(best_model_wts)
 
     # Log validation metrics as tags
     for i, recall in enumerate(recall_per_class):
@@ -269,7 +268,7 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     scheduler1 = ExponentialLR(optimizer, gamma=0.95)
     scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.60, patience=PATIENCE//2)
-    best_model_wts = model.model.state_dict()
+    best_model_wts = model.state_dict()
 
     print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(PATIENCE)["patience"]} \n - Data path: {DATAPATH} \n - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Pretrained Model: {model_path != None} \n')
 
@@ -338,7 +337,7 @@ if __name__ == "__main__":
         mlflow.log_metric("val_accuracy", max_val_acc, step = STEPS)
         
         # Save the model
-        torch.save(model.model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
+        torch.save(model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
         # Log the model to MLflow
         example_input, example_output = example_data_loader()
         signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())

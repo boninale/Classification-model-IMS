@@ -1,9 +1,9 @@
 '''
 This file contains custom models architectures. 
-It is meant to be imported in the classifier_train.py script using : 
+It is meant to be imported in the training script using : 
 
 from architectures import EffNetB0
-model = EffNetB0(num_classes=3, model_path).create_model()
+model = EffNetB0(num_classes=3, model_path)
 '''
 
 import torch
@@ -36,28 +36,33 @@ class EffNetB0(nn.Module):
             nn.Dropout(p=0.3),
             nn.Linear(256, self.num_classes),
         )
-
+        
         if self.model_path:
-            # Reload the model after changing the head to avoid potential conflicts
-            self.model.load_state_dict(torch.load(self.model_path, map_location=device))
+            try:
+                # Load the model after changing the head
+                self.load_state_dict(torch.load(self.model_path, map_location=device))
+            except RuntimeError as e:
+                print(f"Error loading state dictionary from {self.model_path}. Loading the weights with strict=False. You can change the keys' prefix with changestatedict.py. : {e}")
+                self.load_state_dict(torch.load(self.model_path, map_location=device), strict=False)
+            except AttributeError as e:
+                print(f"Error loading state dictionary from {self.model_path}: {e}. Ensure the file path is correct and the file is seekable.")
 
     def forward(self, x):
         return self.model(x)
     
-class CombinedHeadModel(nn.Module):
+class TLregularizer(nn.Module):
 
-    def __init__(self, embedding_dim=3, num_classes=3, model_path=None):
-        super(CombinedHeadModel, self).__init__()
+    def __init__(self, num_classes=3, model_path=None):
+        super(TLregularizer, self).__init__()
         self.model_path = model_path
         self.num_classes = num_classes
-        self.embedding_dim = embedding_dim
+        self.embedding_dim = num_classes
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-        self.backbone = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
+        self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
 
         # Remove the original classifier
-        self.backbone.classifier = nn.Identity()
+        self.model.classifier = nn.Identity()
 
         # Head A: Classification head
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))  # Pool to (1x1x1280)
@@ -76,12 +81,12 @@ class CombinedHeadModel(nn.Module):
             nn.SiLU(),
             nn.LayerNorm(1024),
             nn.Dropout(p=0.4),
-            nn.Linear(1024, embedding_dim)  # Embedding dimension (e.g., 3)
+            nn.Linear(1024, num_classes)  # Embedding dimension (e.g., 3)
         )
 
         # Combine classification and embedding outputs
         self.fc_combined = nn.Sequential(
-            nn.Linear(num_classes + embedding_dim, 512),  # Combine logits + embeddings
+            nn.Linear(num_classes + num_classes, 512),  # Combine logits + embeddings
             nn.SiLU(),
             nn.LayerNorm(512),
             nn.Dropout(p=0.3),
@@ -89,13 +94,18 @@ class CombinedHeadModel(nn.Module):
         )
 
         if self.model_path:
-            # Load the model after changing the head
-            self.load_state_dict(torch.load(self.model_path, weights_only=True, map_location=device))
-
+            try:
+                # Load the model after changing the head
+                self.load_state_dict(torch.load(self.model_path, map_location=device))
+            except RuntimeError as e:
+                print(f"Error loading state dictionary from {self.model_path}. Loading the weights with strict=False. You can change the keys' prefix with changestatedict.py. : {e}")
+                self.load_state_dict(torch.load(self.model_path, map_location=device), strict=False)
+            except AttributeError as e:
+                print(f"Error loading state dictionary from {self.model_path}: {e}. Ensure the file path is correct and the file is seekable.")
 
     def forward(self, x):
         # Shared feature extraction
-        features = self.backbone.features(x)
+        features = self.model.features(x)
 
         # Head A: Classification logits
         x_a = self.avg_pool(features)
