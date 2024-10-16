@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 from sklearn.metrics import recall_score
 
-from architectures import EffNetB0, CombinedHeadModel
+from architectures import EffNetB0, TLregularizer
 
 #region Functions
 def set_seed(seed=31415):
@@ -26,7 +26,6 @@ def set_seed(seed=31415):
     os.environ['PYTHONHASHSEED'] = str(seed)
 
 def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0.2):
-
     """Create training and validation data generators."""
     transform = transforms.Compose([
         v2.RandomResizedCrop(size=(224, 224), antialias=True),
@@ -39,7 +38,6 @@ def create_data_generators(datapath, val_path = None, batch_size=25, val_split=0
     full_dataset = datasets.ImageFolder(root=datapath, transform=transform)
     
     if val_path==None: 
-
         # Calculate the number of samples for training and validation
         val_size = int(len(full_dataset) * val_split)
         train_size = len(full_dataset) - val_size
@@ -61,7 +59,6 @@ def get_callbacks(patience = 10):
     """Create callbacks for training."""
     early_stopping = {
         'patience': patience,
-
         'counter': 0,
         'best_loss': None,
         'early_stop': False
@@ -80,8 +77,10 @@ def example_data_loader():
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, callbacks, device):
     """Train the model."""
+
     best_model_wts = model.state_dict()
     callbacks['best_loss'] = min_val_loss
+
 
     model = model.to(device)
 
@@ -175,6 +174,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
         mlflow.log_metric("val_accuracy", val_acc, step=STEPS + epoch)
         mlflow.log_metric("learning_rate", optimizer.param_groups[0]['lr'], step=STEPS + epoch)
 
+
         print(f'Epoch {epoch}/{epochs} : Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_acc:.4f}')
         
         # Early stopping
@@ -191,7 +191,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, c
                 callbacks['counter'] = 0
                 print("Early stopping")
                 break
-                
+    
     if best_model_wts is not None:
         model.load_state_dict(best_model_wts)
 
@@ -219,41 +219,27 @@ def get_metrics() :
 
 # endregion
 
-def retrieve_metrics(metrics_to_retrieve) :
-    """Retrieve metrics from the MLflow run."""
-    client = mlflow.tracking.MlflowClient()
-    run_info = mlflow.active_run().info
-    run_id = run_info.run_id
-
-    # Collect run parameters and metrics
-    for metric in metrics_to_retrieve:
-        metric_history = client.get_metric_history(run_id, metric)
-        metrics_log[metric].extend(metric_history) #Append to previous history
-
-    steps = max(len(records) for records in metrics_log.values())
-
-    return metrics_log, steps 
-
 if __name__ == "__main__":
     print("\n","\n","Classifier training script", "\n")
     
     # region Initialization
 
     # Setup
-    #set_seed()
+    set_seed()
 
     # Constants
     IMG_SIZE = (224, 224)
     BATCH_SIZE = 20
     EPOCHS = 30
-    PATIENCE = 2
-    DATAPATH = 'datasets/ProspectFD/Minervois/CameraA/p0901_1433_A_balanced'
+    PATIENCE = 10
+    DATAPATH = 'datasets/combined'
     SAVEPATH = 'models'
     VAL_PATH = None
     model_path = None
-    new_model_name = 'dev'
-    experiment = 'Classification-row-images-dev'
-    model_type = 'HeadV2'
+    new_model_name = 'Classification-row-images-prospectFD'
+    experiment = 'Classification-row-images-prospectFD'
+    model_type = 'TLregularizer' #'EffNetB0'
+
     class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
     num_classes = len(class_names)
     
@@ -263,14 +249,17 @@ if __name__ == "__main__":
     # Create and compile the model
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("Device:", device, "\n")
-    model = EffNetB0(num_classes, model_path)  #CombinedHeadModel(embedding_dim = 3, num_classes = 3, model_path = model_path)
+    if model_type == 'EffNetB0':
+        model = EffNetB0(num_classes, model_path).to(device)
+    elif model_type == 'TLregularizer':
+        model = TLregularizer(num_classes, model_path).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     scheduler1 = ExponentialLR(optimizer, gamma=0.95)
     scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.60, patience=PATIENCE//2)
     best_model_wts = model.state_dict()
 
-    print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(PATIENCE)["patience"]} \n - Data path: {DATAPATH} \n - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Pretrained Model: {model_path != None} \n')
+    print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(PATIENCE)["patience"]} \n - Data path: {DATAPATH} - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Model type : {model_type} - Pretrained: {model_path != None} \n')
 
     mlflow.set_experiment(experiment)
     run_dt = f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
@@ -288,6 +277,7 @@ if __name__ == "__main__":
     
     # Initialize a dictionary to store the metrics
     metrics_log = {metric: [] for metric in metrics_to_retrieve}
+
     # endregion
     #region Training
 
@@ -338,6 +328,7 @@ if __name__ == "__main__":
         
         # Save the model
         torch.save(model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
+
         # Log the model to MLflow
         example_input, example_output = example_data_loader()
         signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
@@ -353,4 +344,3 @@ if __name__ == "__main__":
        
         #endregion
     mlflow.end_run()
-
