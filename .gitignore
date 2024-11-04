@@ -5,11 +5,11 @@ venv
 graphs
 mlruns
 models
-changename.py
 code.txt
-stratified_sampling.py
-testmodel.py
-archi_embedding.py
 sample.py
-utils
+utils/archi_embedding.py
+utils/stratified_sampling.py
+utils/testmodel.py
+utils/sorted datasets so far.txt
+utils/code.txt
 

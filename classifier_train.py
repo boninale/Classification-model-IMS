@@ -16,7 +16,8 @@ import time
 from datetime import datetime
 from sklearn.metrics import recall_score
 
-from architectures import EffNetB0, TLregularizer
+from utils.architectures import EffNetB0, TLregularizer
+from utils.preprocessing import create_data_generators
 
 #region Functions
 def set_seed(seed=31415):
@@ -219,10 +220,9 @@ def get_metrics() :
 
 # endregion
 
+# region Initialization
 if __name__ == "__main__":
     print("\n","\n","Classifier training script", "\n")
-    
-    # region Initialization
 
     # Setup
     set_seed()
@@ -241,107 +241,111 @@ if __name__ == "__main__":
     experiment = 'Classification-row-images-prospectFD'
     model_type = 'EffNetB0' #'TLregularizer'
 
-    class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
-    num_classes = len(class_names)
+# endregion
+
+#region Training
+
+class_names = sorted([d.name for d in os.scandir(DATAPATH) if d.is_dir()])
+num_classes = len(class_names)
+
+# Create data generators
+train_loader, val_loader = create_data_generators(DATAPATH, VAL_PATH, BATCH_SIZE)
+
+# Create and compile the model
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print("Device:", device, "\n")
+if model_type == 'EffNetB0':
+    model = EffNetB0(num_classes, model_path).to(device)
+elif model_type == 'TLregularizer':
+    model = TLregularizer(num_classes, model_path).to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+scheduler1 = ExponentialLR(optimizer, gamma=0.95)
+scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.60, patience=PATIENCE//2)
+best_model_wts = model.state_dict()
+
+print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(PATIENCE)["patience"]} \n - Data path: {DATAPATH} - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Model type : {model_type} - Pretrained: {model_path != None} \n')
+
+mlflow.set_experiment(experiment)
+run_dt = f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+
+metrics_to_retrieve = [ "val_loss", 
+                        "val_accuracy",
+                        "learning_rate", 
+                        "train_loss", 
+                        "train_accuracy", 
+                        "overall_avg_time_per_step",
+                        "val_recall_missing_vine",
+                        "val_recall_turn",
+                        "val_recall_vine"
+                        ]
+
+# Initialize a dictionary to store the metrics
+metrics_log = {metric: [] for metric in metrics_to_retrieve}
+
+
+
+STEPS = 0
+min_val_loss = None
+max_val_acc = None
+
+with mlflow.start_run(run_name=f"{run_dt}") as run:
     
-    # Create data generators
-    train_loader, val_loader = create_data_generators(DATAPATH, VAL_PATH, BATCH_SIZE)
+    run_name = run_dt
 
-    # Create and compile the model
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print("Device:", device, "\n")
-    if model_type == 'EffNetB0':
-        model = EffNetB0(num_classes, model_path).to(device)
-    elif model_type == 'TLregularizer':
-        model = TLregularizer(num_classes, model_path).to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-    scheduler1 = ExponentialLR(optimizer, gamma=0.95)
-    scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.60, patience=PATIENCE//2)
-    best_model_wts = model.state_dict()
+    # Log model parameters (e.g., hyperparameters)
+    mlflow.log_param("batch_size", train_loader.batch_size)
+    mlflow.log_param("epochs", EPOCHS)
+    mlflow.log_param("patience", get_callbacks(PATIENCE)['patience'])
+    mlflow.log_param("dataset", DATAPATH)
 
-    print(f'Run parameters: \n - Batch size: {BATCH_SIZE} \n - Epochs: {EPOCHS} \n - Patience: {get_callbacks(PATIENCE)["patience"]} \n - Data path: {DATAPATH} - Save path: {SAVEPATH} \n - Validation set: {VAL_PATH != None} \n - Model type : {model_type} - Pretrained: {model_path != None} \n')
+    # Set some tags for metadata
+    mlflow.set_tag("model_type", model_type)
+    #mlflow.set_tag("note", "First run using MLflow")
 
-    mlflow.set_experiment(experiment)
-    run_dt = f"Run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    # Define early stopping callback
+    early_stopping = get_callbacks(PATIENCE)
 
-    metrics_to_retrieve = [ "val_loss", 
-                            "val_accuracy",
-                            "learning_rate", 
-                            "train_loss", 
-                            "train_accuracy", 
-                            "overall_avg_time_per_step",
-                            "val_recall_missing_vine",
-                            "val_recall_turn",
-                            "val_recall_vine"
-                            ]
-    
-    # Initialize a dictionary to store the metrics
-    metrics_log = {metric: [] for metric in metrics_to_retrieve}
+    # Train the model
+    train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
+    STEPS , min_val_loss , max_val_acc = get_metrics()
 
-    # endregion
-    #region Training
+    print("\n", "NOW FINE-TUNING THE MODEL", "\n")
 
-    STEPS = 0
-    min_val_loss = None
-    max_val_acc = None
+    # Unfreeze some layers and fine-tune the model
+    for param in model.parameters():
+            param.requires_grad = True
 
-    with mlflow.start_run(run_name=f"{run_dt}") as run:
-        
-        run_name = run_dt
+    # Recompile the model with a lower learning rate
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    scheduler1 = ExponentialLR(optimizer, gamma=0.99)
+    scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=PATIENCE//2)
 
-        # Log model parameters (e.g., hyperparameters)
-        mlflow.log_param("batch_size", train_loader.batch_size)
-        mlflow.log_param("epochs", EPOCHS)
-        mlflow.log_param("patience", get_callbacks(PATIENCE)['patience'])
-        mlflow.log_param("dataset", DATAPATH)
+    #run_name = f"{run_dt}-finetuning"
 
-        # Set some tags for metadata
-        mlflow.set_tag("model_type", model_type)
-        #mlflow.set_tag("note", "First run using MLflow")
-
-        # Define early stopping callback
-        early_stopping = get_callbacks(PATIENCE)
-    
+    #with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
         # Train the model
-        train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-        STEPS , min_val_loss , max_val_acc = get_metrics()
+    train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
+    STEPS , min_val_loss, max_val_acc = get_metrics()
 
-        print("\n", "NOW FINE-TUNING THE MODEL", "\n")
+    mlflow.log_metric("val_accuracy", max_val_acc, step = STEPS)
+    
+    # Save the model
+    torch.save(model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
 
-        # Unfreeze some layers and fine-tune the model
-        for param in model.parameters():
-                param.requires_grad = True
+    # Log the model to MLflow
+    example_input, example_output = example_data_loader()
+    signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
 
-        # Recompile the model with a lower learning rate
-        optimizer = optim.Adam(model.parameters(), lr=0.0001)
-        scheduler1 = ExponentialLR(optimizer, gamma=0.99)
-        scheduler2 = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=PATIENCE//2)
+    mlflow.pytorch.log_model(pytorch_model = model, 
+                        artifact_path="model",
+                        signature=signature,
+                        registered_model_name=new_model_name
+                        )
 
-        #run_name = f"{run_dt}-finetuning"
+    print('Training completed. Model saved to:', SAVEPATH, '\n')    
 
-        #with mlflow.start_run(run_name=f"{run_name}", nested = True) as run:
-            # Train the model
-        train_model(model, train_loader, val_loader, criterion, optimizer, EPOCHS, early_stopping, device)
-        STEPS , min_val_loss, max_val_acc = get_metrics()
-
-        mlflow.log_metric("val_accuracy", max_val_acc, step = STEPS)
-        
-        # Save the model
-        torch.save(model.state_dict(), os.path.join(SAVEPATH, f'{run_dt}.pth'))
-
-        # Log the model to MLflow
-        example_input, example_output = example_data_loader()
-        signature = infer_signature(example_input.cpu().numpy(), example_output.cpu().detach().numpy())
-
-        mlflow.pytorch.log_model(pytorch_model = model, 
-                            artifact_path="model",
-                            signature=signature,
-                            registered_model_name=new_model_name
-                            )
-
-        print('Training completed. Model saved to:', SAVEPATH, '\n')    
-
-       
-        #endregion
-    mlflow.end_run()
+    
+    
+mlflow.end_run()
+#endregion
