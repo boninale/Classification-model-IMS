@@ -349,3 +349,13 @@ with mlflow.start_run(run_name=f"{run_dt}") as run:
     
 mlflow.end_run()
 #endregion
+
+'''
+Visualize with MLflow UI : 
+After running the script, start the MLflow UI to visualize metrics, parameters, and model artifacts. In bash, run in the training directory :
+
+mlflow ui -–host 0.0.0.0 -–port 5000
+
+Access the dashboard at  http://<ip address of the server>:5000.  (The ip address of the deepwater server is 192.168.215.58)
+
+'''
